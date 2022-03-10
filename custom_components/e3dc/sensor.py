@@ -24,7 +24,7 @@ from homeassistant.helpers.update_coordinator import (
 )
 
 from .const import DOMAIN
-from e3dc import E3DC
+from python_e3dc import E3DC
 
 _LOGGER = logging.getLogger(__name__)
 
