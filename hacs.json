@@ -1,0 +1,4 @@
+{
+    "name": "E3DC Home Assistant",
+    "domains": ["sensor"]
+}
