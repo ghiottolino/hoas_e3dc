@@ -1,6 +1,7 @@
 {
   "domain": "e3dc",
   "name": "E3DC",
+  "version": "1.0.0",
   "config_flow": false,
   "documentation": "https://www.home-assistant.io/integrations/e3dc",
   "requirements": [],
