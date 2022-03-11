@@ -16,6 +16,8 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.typing import ConfigType
 
 from .const import DOMAIN
+from ._e3dc import E3DC
+
 PLATFORMS: list[Platform] = [Platform.SENSOR]
 
 def setup(hass: HomeAssistant, config: ConfigType) -> bool:
