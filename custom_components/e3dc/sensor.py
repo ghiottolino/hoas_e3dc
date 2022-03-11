@@ -195,7 +195,7 @@ class BatteryOutgoing(SensorEntity):
         e3dc_status = self.e3dc_data.get()
         battery_consumption = e3dc_status['consumption']['battery']
         if battery_consumption < 0:
-            self._attr_native_value = battery_consumption
+            self._attr_native_value = -battery_consumption
         else:
             self._attr_native_value = 0
                 
