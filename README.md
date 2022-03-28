@@ -73,7 +73,7 @@ sensor:
 then you can go to your energy dashboard (http://HOME_ASSISTANT_URL/config/energy/dashboard). You may need to wait a few hours before seeing the new statistics.
 
 <p align="center">
-<img src="https://user-images.githubusercontent.com/38377070/124113882-3676a380-da6c-11eb-8f3e-db00466fd601.png"/>
+<img src="https://raw.githubusercontent.com/ghiottolino/hoas_e3dc/main/hoas_power.png"/>
 </p>
 
 # Usage with Power Distribution Card
@@ -105,5 +105,5 @@ From a lovelace dashboard, this is how I've configured the power dinstribution c
               entity: sensor.e3dc_battery_charge
 ```
 <p align="center">
-<img src="https://user-images.githubusercontent.com/38377070/124113882-3676a380-da6c-11eb-8f3e-db00466fd601.png"/>
+<img src="https://raw.githubusercontent.com/ghiottolino/hoas_e3dc/main/power_distibution.png"/>
 </p>
