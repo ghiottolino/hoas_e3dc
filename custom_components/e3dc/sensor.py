@@ -140,7 +140,7 @@ class GridConsumption(SensorEntity):
             self._attr_native_value = 0
         
 class HouseConsumption(SensorEntity):
-    _attr_name = "E3DC House Consumtpion"
+    _attr_name = "E3DC House Consumption"
     _attr_native_unit_of_measurement = POWER_WATT
     _attr_device_class = SensorDeviceClass.POWER
     _attr_state_class = SensorStateClass.MEASUREMENT
@@ -211,4 +211,99 @@ class BatteryCharge(SensorEntity):
         
     def update(self) -> None:
         e3dc_status = self.e3dc_data.get()
-        self._attr_native_value = e3dc_status['stateOfCharge']                 
+        self._attr_native_value = e3dc_status['stateOfCharge']
+
+"""Grid values, consumption positive values, production negative values."""       
+class GridConsumptionProduction(SensorEntity):
+    _attr_name = "E3DC Grid Consumption/Production"
+    _attr_native_unit_of_measurement = POWER_WATT
+    _attr_device_class = SensorDeviceClass.POWER
+    _attr_state_class = SensorStateClass.MEASUREMENT
+
+    def __init__(self, e3dc_data):
+        self.e3dc_data = e3dc_data
+        
+    def update(self) -> None:
+        e3dc_status = self.e3dc_data.get()
+        self._attr_native_value = = e3dc_status['production']['grid']
+        if grid_production < 0:
+            self._attr_native_value = -grid_production
+        else:
+            self._attr_native_value = 0
+            
+"""Battery values, incoming negative values, outgoing positive values."""            
+class BatteryIncomingOutgoing(SensorEntity):
+    _attr_name = "E3DC Battery Incoming/Outgoing"
+    _attr_native_unit_of_measurement = POWER_WATT
+    _attr_device_class = SensorDeviceClass.POWER
+    _attr_state_class = SensorStateClass.MEASUREMENT
+
+    def __init__(self, e3dc_data):
+        self.e3dc_data = e3dc_data
+        
+    def update(self) -> None:
+        e3dc_status = self.e3dc_data.get()
+        self._attr_native_value = -e3dc_status['consumption']['battery']
+    
+"""House consumption values, chagned to negative values."""                    
+class HouseConsumptionNegative(SensorEntity):
+    _attr_name = "E3DC House Consumption"
+    _attr_native_unit_of_measurement = POWER_WATT
+    _attr_device_class = SensorDeviceClass.POWER
+    _attr_state_class = SensorStateClass.MEASUREMENT
+
+    def __init__(self, e3dc_data):
+        self.e3dc_data = e3dc_data
+        
+    def update(self) -> None:
+        e3dc_status = self.e3dc_data.get()
+        self._attr_native_value = -e3dc_status['consumption']['house']
+
+"""Autarky: What we produce (solar) or use from our own resources (battery), divided by everything we produced and user from our own, and use from the grid."""                            
+class Autarky(SensorEntity):
+    _attr_name = "E3DC Autarky"
+    _attr_native_unit_of_measurement = PERCENTAGE
+    _attr_device_class = SensorDeviceClass.POWER
+    _attr_state_class = SensorStateClass.MEASUREMENT
+
+    def __init__(self, e3dc_data):
+        self.e3dc_data = e3dc_data
+        
+    def update(self) -> None:
+        e3dc_status = self.e3dc_data.get()
+        grid_usage = e3dc_status['production']['grid']
+        solar_production = e3dc_status['production']['solar']
+        battery_outgoing = e3dc_status['consumption']['battery']
+        if battery_outgoing < 0:
+            battery_outgoing = -battery_outgoing
+        else:
+            battery_outgoing = 0    
+            
+                 
+        if grid_usage < 0:
+            self._attr_native_value = 100
+        else:
+            self._attr_native_value = (solar_production+battery_outgoing)/(solar_production+battery_outgoing+grid_usage)
+            
+"""DomesticConsumption: What we use (house) and what we store (battery), divided by the solar power we produce."""                            
+class DomesticConsumption(SensorEntity):
+    _attr_name = "E3DC Domestic Consumption"
+    _attr_native_unit_of_measurement = PERCENTAGE
+    _attr_device_class = SensorDeviceClass.POWER
+    _attr_state_class = SensorStateClass.MEASUREMENT
+
+    def __init__(self, e3dc_data):
+        self.e3dc_data = e3dc_data
+        
+    def update(self) -> None:
+        e3dc_status = self.e3dc_data.get()
+        house_consumption = e3dc_status['consumption']['house']
+        solar_production = e3dc_status['production']['solar']
+        battery_incoming = e3dc_status['consumption']['battery']
+        if battery_incoming > 0:
+            battery_incoming = battery_incoming
+        else:
+            battery_incoming = 0    
+            
+        self._attr_native_value = (house_consumption+battery_incoming)/(solar_production)             
+
