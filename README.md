@@ -9,7 +9,7 @@ Home Assistant integration to provide E3DC data to hoas retrieving data from the
 # Installation
 
 1. Make sure the [HACS](https://github.com/custom-components/hacs) custom component is installed and working.
-2. Search for `hoas_e3dc` and add it through HACS
+2. Search for `E3DC Home Assistant` and add it through HACS
 3. Refresh home-assistant.
 
 # Configuration
