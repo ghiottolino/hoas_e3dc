@@ -198,12 +198,11 @@ class BatteryOutgoing(SensorEntity):
             self._attr_native_value = -battery_consumption
         else:
             self._attr_native_value = 0
-                
-        
+                        
 class BatteryCharge(SensorEntity):
     _attr_name = "E3DC Battery Charge"
     _attr_native_unit_of_measurement = PERCENTAGE
-    _attr_device_class = SensorDeviceClass.POWER
+    _attr_device_class = SensorDeviceClass.BATTERY
     _attr_state_class = SensorStateClass.MEASUREMENT
 
     def __init__(self, e3dc_data):
@@ -215,7 +214,7 @@ class BatteryCharge(SensorEntity):
 
 #Grid values, consumption positive values, production negative values.     
 class GridConsumptionProduction(SensorEntity):
-    _attr_name = "E3DC Grid Consumption/Production"
+    _attr_name = "E3DC Grid Consumption Production"
     _attr_native_unit_of_measurement = POWER_WATT
     _attr_device_class = SensorDeviceClass.POWER
     _attr_state_class = SensorStateClass.MEASUREMENT
@@ -229,7 +228,7 @@ class GridConsumptionProduction(SensorEntity):
             
 #Battery values, incoming negative values, outgoing positive values.            
 class BatteryIncomingOutgoing(SensorEntity):
-    _attr_name = "E3DC Battery Incoming/Outgoing"
+    _attr_name = "E3DC Battery Incoming Outgoing"
     _attr_native_unit_of_measurement = POWER_WATT
     _attr_device_class = SensorDeviceClass.POWER
     _attr_state_class = SensorStateClass.MEASUREMENT
@@ -259,7 +258,7 @@ class HouseConsumptionNegative(SensorEntity):
 class Autarky(SensorEntity):
     _attr_name = "E3DC Autarky"
     _attr_native_unit_of_measurement = PERCENTAGE
-    _attr_device_class = SensorDeviceClass.POWER
+    _attr_device_class = SensorDeviceClass.BATTERY
     _attr_state_class = SensorStateClass.MEASUREMENT
 
     def __init__(self, e3dc_data):
@@ -274,7 +273,6 @@ class Autarky(SensorEntity):
             battery_outgoing = -battery_outgoing
         else:
             battery_outgoing = 0    
-            
                  
         if grid_usage < 0:
             self._attr_native_value = 100
@@ -285,7 +283,7 @@ class Autarky(SensorEntity):
 class DomesticConsumption(SensorEntity):
     _attr_name = "E3DC Domestic Consumption"
     _attr_native_unit_of_measurement = PERCENTAGE
-    _attr_device_class = SensorDeviceClass.POWER
+    _attr_device_class = SensorDeviceClass.BATTERY
     _attr_state_class = SensorStateClass.MEASUREMENT
 
     def __init__(self, e3dc_data):
