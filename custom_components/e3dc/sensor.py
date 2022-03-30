@@ -50,7 +50,7 @@ async def async_setup_platform(
     
     async_add_entities(
         #[HouseConsumpion(coordinator), GridConsumption(e3dc_api)]
-        [E3DCSensor(e3dc_api, e3dc_data), GridProduction(e3dc_data), SolarProduction(e3dc_data),GridConsumption(e3dc_data),HouseConsumption(e3dc_data), WallboxConsumption(e3dc_data), BatteryIncoming(e3dc_data),BatteryOutgoing(e3dc_data),BatteryCharge(e3dc_data)]
+        [E3DCSensor(e3dc_api, e3dc_data), GridProduction(e3dc_data), SolarProduction(e3dc_data),GridConsumption(e3dc_data),HouseConsumption(e3dc_data), WallboxConsumption(e3dc_data), BatteryIncoming(e3dc_data),BatteryOutgoing(e3dc_data),BatteryCharge(e3dc_data),GridConsumptionProduction(e3dc_data),BatteryIncomingOutgoing(e3dc_data),HouseConsumptionNegative(e3dc_data),Autarky(e3dc_data),DomesticConsumption(e3dc_data)]
     )
 
 
