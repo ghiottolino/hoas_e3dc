@@ -224,7 +224,7 @@ class GridConsumptionProduction(SensorEntity):
         
     def update(self) -> None:
         e3dc_status = self.e3dc_data.get()
-        self._attr_native_value = -e3dc_status['production']['grid']
+        self._attr_native_value = e3dc_status['production']['grid']
             
 #Battery values, incoming negative values, outgoing positive values.            
 class BatteryIncomingOutgoing(SensorEntity):
@@ -277,9 +277,9 @@ class Autarky(SensorEntity):
         if grid_usage < 0:
             self._attr_native_value = 100
         else:
-            self._attr_native_value = (solar_production+battery_outgoing)/(solar_production+battery_outgoing+grid_usage)
+            self._attr_native_value = (solar_production+battery_outgoing)/(solar_production+battery_outgoing+grid_usage) * 100
             
-# DomesticConsumption: What we use (house) and what we store (battery), divided by the solar power we produce.                          
+# DomesticConsumption: 1 - What we give to the grid divided by the solar power we produce.                          
 class DomesticConsumption(SensorEntity):
     _attr_name = "E3DC Domestic Consumption"
     _attr_native_unit_of_measurement = PERCENTAGE
@@ -294,10 +294,9 @@ class DomesticConsumption(SensorEntity):
         house_consumption = e3dc_status['consumption']['house']
         solar_production = e3dc_status['production']['solar']
         battery_incoming = e3dc_status['consumption']['battery']
-        if battery_incoming > 0:
-            battery_incoming = battery_incoming
+        grid_production = e3dc_status['production']['grid']
+        if grid_production < 0:
+            self._attr_native_value = ( 1- (-grid_production/solar_production)) * 100
         else:
-            battery_incoming = 0    
-            
-        self._attr_native_value = (house_consumption+battery_incoming)/(solar_production)             
+            self._attr_native_value = 100      
 
