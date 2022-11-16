@@ -4,9 +4,9 @@ import json
 from .const import DOMAIN
 
 
-USERNAME = 'nina.leinenbach@gmail.com'
-PASS = '5ea19e75c16d7c0d74f2197163e1316f'
-SERIALNUMBER = '542038000748'
+USERNAME = 'USERNAME_HERE'
+PASS = 'PASSWORD_HERE'
+SERIALNUMBER = 'SERIAL_NUMER'
 CONFIG = {"powermeters": [{"index": 6}]}
 
 print("web connection")
