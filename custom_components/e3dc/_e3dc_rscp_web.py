@@ -37,7 +37,7 @@ from . import _rscpLib as rscpLib
  
 """
 
-REMOTE_ADDRESS = "wss://s10.e3dc.com/ws/"
+REMOTE_ADDRESS = "wss://s10.e3dc.com/ws"
 
 
 class SocketNotReady(Exception):
