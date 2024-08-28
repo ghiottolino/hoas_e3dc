@@ -1,26 +1,28 @@
+"""E3DC Library for Python.
+
+Python class to connect to an E3/DC system.
+Copyright 2017-2023 Francesco Santini <francesco.santini@gmail.com> and collaborators. See AUTHORS file for full copyright.
+Licensed under a MIT license. See LICENSE for details.
 """
-The "hello world" custom component.
-This component implements the bare minimum that a component should implement.
-Configuration:
-To use the hello_world component you will need to add the following to your
-configuration.yaml file.
-hello_world_async:
-"""
-from __future__ import annotations
 
+from ._e3dc import E3DC, AuthenticationError, NotAvailableError, PollError, SendError
+from ._e3dc_rscp_local import CommunicationError, RSCPAuthenticationError, RSCPKeyError
+from ._e3dc_rscp_web import RequestTimeoutError, SocketNotReady
+from ._rscpLib import FrameError
+from ._rscpLib import set_debug as set_rscp_debug
 
-import logging
-
-from homeassistant.const import Platform
-from homeassistant.core import HomeAssistant
-from homeassistant.helpers.typing import ConfigType
-
-from .const import DOMAIN
-from ._e3dc import E3DC
-
-PLATFORMS: list[Platform] = [Platform.SENSOR]
-
-def setup(hass: HomeAssistant, config: ConfigType) -> bool:
-    """Set up a skeleton component."""
-    # Return boolean to indicate that initialization was successfully.
-    return True
+__all__ = [
+    "E3DC",
+    "AuthenticationError",
+    "NotAvailableError",
+    "PollError",
+    "SendError",
+    "CommunicationError",
+    "RSCPAuthenticationError",
+    "RSCPKeyError",
+    "RequestTimeoutError",
+    "SocketNotReady",
+    "FrameError",
+    "set_rscp_debug",
+]
+__version__ = "0.9.2"

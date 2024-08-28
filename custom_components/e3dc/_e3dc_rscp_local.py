@@ -4,10 +4,14 @@
 # Copyright 2017 Francesco Santini <francesco.santini@gmail.com>
 # Licensed under a MIT license. See LICENSE for details
 
+from __future__ import annotations  # required for python < 3.9
+
 import socket
+from typing import Any, Tuple
 
 from ._RSCPEncryptDecrypt import RSCPEncryptDecrypt
 from ._rscpLib import rscpDecode, rscpEncode, rscpFrame
+from ._rscpTags import RscpError, RscpTag, RscpType
 
 PORT = 5033
 BUFFER_SIZE = 1024 * 32
@@ -25,6 +29,12 @@ class RSCPNotAvailableError(Exception):
     pass
 
 
+class RSCPKeyError(Exception):
+    """Class for RSCP Encryption Key Error Exception."""
+
+    pass
+
+
 class CommunicationError(Exception):
     """Class for Communication Error Exception."""
 
@@ -34,7 +44,7 @@ class CommunicationError(Exception):
 class E3DC_RSCP_local:
     """A class describing an E3DC system connection using RSCP protocol locally."""
 
-    def __init__(self, username, password, ip, key):
+    def __init__(self, username: str, password: str, ip: str, key: str):
         """Constructor of an E3DC RSCP local object.
 
         Args:
@@ -47,21 +57,28 @@ class E3DC_RSCP_local:
         self.password = password.encode("utf-8")
         self.ip = ip
         self.key = key.encode("utf-8")
-        self.socket = None
-        self.encdec = None
+        self.socket: socket.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.connected: bool = False
+        self.encdec: RSCPEncryptDecrypt
         self.processedData = None
 
-    def _send(self, plainMsg):
+    def _send(
+        self, plainMsg: Tuple[str | int | RscpTag, str | int | RscpType, Any]
+    ) -> None:
         sendData = rscpFrame(rscpEncode(plainMsg))
         encData = self.encdec.encrypt(sendData)
         self.socket.send(encData)
 
     def _receive(self):
         data = self.socket.recv(BUFFER_SIZE)
+        if len(data) == 0:
+            raise RSCPKeyError
         decData = rscpDecode(self.encdec.decrypt(data))[0]
         return decData
 
-    def sendCommand(self, plainMsg):
+    def sendCommand(
+        self, plainMsg: Tuple[str | int | RscpTag, str | int | RscpType, Any]
+    ) -> None:
         """Sending RSCP command.
 
         Args:
@@ -69,7 +86,9 @@ class E3DC_RSCP_local:
         """
         self.sendRequest(plainMsg)  # same as sendRequest but doesn't return a value
 
-    def sendRequest(self, plainMsg):
+    def sendRequest(
+        self, plainMsg: Tuple[str | int | RscpTag, str | int | RscpType, Any]
+    ) -> Tuple[str | int | RscpTag, str | int | RscpType, Any]:
         """Sending RSCP request.
 
         Args:
@@ -81,55 +100,61 @@ class E3DC_RSCP_local:
         try:
             self._send(plainMsg)
             receive = self._receive()
-        except:
+        except RSCPKeyError:
+            self.disconnect()
+            raise
+        except Exception:
             self.disconnect()
             raise CommunicationError
 
         if receive[1] == "Error":
             self.disconnect()
-            if receive[2] == "RSCP_ERR_ACCESS_DENIED":
+            if receive[2] == RscpError.RSCP_ERR_ACCESS_DENIED.name:
                 raise RSCPAuthenticationError
-            elif receive[2] == "RSCP_ERR_NOT_AVAILABLE":
+            elif receive[2] == RscpError.RSCP_ERR_NOT_AVAILABLE.name:
                 raise RSCPNotAvailableError
             else:
                 raise CommunicationError(receive[2])
         return receive
 
-    def connect(self):
+    def connect(self) -> None:
         """Establishes connection to the E3DC system."""
-        if self.socket is not None:
-            self.disconnect()
         try:
             self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self.socket.settimeout(5)
             self.socket.connect((self.ip, PORT))
             self.processedData = None
-        except:
+            self.connected = True
+        except Exception:
             self.disconnect()
             raise CommunicationError
         self.encdec = RSCPEncryptDecrypt(self.key)
 
         self.sendRequest(
             (
-                "RSCP_REQ_AUTHENTICATION",
-                "Container",
+                RscpTag.RSCP_REQ_AUTHENTICATION,
+                RscpType.Container,
                 [
-                    ("RSCP_AUTHENTICATION_USER", "CString", self.username),
-                    ("RSCP_AUTHENTICATION_PASSWORD", "CString", self.password),
+                    (RscpTag.RSCP_AUTHENTICATION_USER, RscpType.CString, self.username),
+                    (
+                        RscpTag.RSCP_AUTHENTICATION_PASSWORD,
+                        RscpType.CString,
+                        self.password,
+                    ),
                 ],
             )
         )
 
-    def disconnect(self):
+    def disconnect(self) -> None:
         """Disconnects from the E3DC system."""
-        if self.socket is not None:
-            self.socket.close()
-            self.socket = None
+        self.socket.close()
+        self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.connected = False
 
-    def isConnected(self):
+    def isConnected(self) -> bool:
         """Validate connection status.
 
         Returns:
             bool: true if connected
         """
-        return self.socket is not None
+        return self.connected
