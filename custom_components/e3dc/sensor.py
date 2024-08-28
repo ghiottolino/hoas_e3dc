@@ -37,8 +37,8 @@ async def async_setup_platform(
 ) -> None:
     """Config entry example."""
     
-    logging.info("initializing E3DC sensors with config:")
-    logging.info(config)    
+    logging.warning("initializing E3DC sensors with config:")
+    logging.warning(config)    
     
     USERNAME = config['username']
     PASS = config['md5_pass']
