@@ -11,8 +11,8 @@ from homeassistant.components.sensor import (
     SensorStateClass,
 )
 from homeassistant.exceptions import ConfigEntryAuthFailed
-
-from homeassistant.const import POWER_WATT, PERCENTAGE
+from homeassistant.const import PERCENTAGE
+from homeassistant.const import UnitOfPower
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.typing import ConfigType, DiscoveryInfoType
@@ -74,9 +74,7 @@ class E3DCSensor(SensorEntity):
     """Representation of a Sensor."""
 
     _attr_name = "E3DC Sensor"
-    #_attr_native_unit_of_measurement = POWER_WATT
-    _attr_device_class = SensorDeviceClass.POWER
-    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_device_class = SensorDeviceClass.DATE
 
     def __init__(self, api, e3dc_data):
         self.api = api
@@ -90,11 +88,11 @@ class E3DCSensor(SensorEntity):
         logging.info("Polling E3DC Web")
         e3dc_status = self.api.poll()
         self.e3dc_data.update(e3dc_status)
-        self._attr_native_value = e3dc_status
+        self._attr_native_value = e3dc_status['time']
 
 class GridProduction(SensorEntity):
     _attr_name = "E3DC Grid Production"
-    _attr_native_unit_of_measurement = POWER_WATT
+    _attr_native_unit_of_measurement = UnitOfPower.WATT
     _attr_device_class = SensorDeviceClass.POWER
     _attr_state_class = SensorStateClass.MEASUREMENT
 
@@ -111,7 +109,7 @@ class GridProduction(SensorEntity):
             
 class SolarProduction(SensorEntity):
     _attr_name = "E3DC Solar Production"
-    _attr_native_unit_of_measurement = POWER_WATT
+    _attr_native_unit_of_measurement = UnitOfPower.WATT
     _attr_device_class = SensorDeviceClass.POWER
     _attr_state_class = SensorStateClass.MEASUREMENT
 
@@ -124,7 +122,7 @@ class SolarProduction(SensorEntity):
  
 class GridConsumption(SensorEntity):
     _attr_name = "E3DC Grid Consumption"
-    _attr_native_unit_of_measurement = POWER_WATT
+    _attr_native_unit_of_measurement = UnitOfPower.WATT
     _attr_device_class = SensorDeviceClass.POWER
     _attr_state_class = SensorStateClass.MEASUREMENT
 
@@ -141,7 +139,7 @@ class GridConsumption(SensorEntity):
         
 class HouseConsumption(SensorEntity):
     _attr_name = "E3DC House Consumption"
-    _attr_native_unit_of_measurement = POWER_WATT
+    _attr_native_unit_of_measurement = UnitOfPower.WATT
     _attr_device_class = SensorDeviceClass.POWER
     _attr_state_class = SensorStateClass.MEASUREMENT
 
@@ -154,7 +152,7 @@ class HouseConsumption(SensorEntity):
 
 class WallboxConsumption(SensorEntity):
     _attr_name = "E3DC Wallbox Consumption"
-    _attr_native_unit_of_measurement = POWER_WATT
+    _attr_native_unit_of_measurement = UnitOfPower.WATT
     _attr_device_class = SensorDeviceClass.POWER
     _attr_state_class = SensorStateClass.MEASUREMENT
 
@@ -167,7 +165,7 @@ class WallboxConsumption(SensorEntity):
                 
 class BatteryIncoming(SensorEntity):
     _attr_name = "E3DC Battery Incoming"
-    _attr_native_unit_of_measurement = POWER_WATT
+    _attr_native_unit_of_measurement = UnitOfPower.WATT
     _attr_device_class = SensorDeviceClass.POWER
     _attr_state_class = SensorStateClass.MEASUREMENT
 
@@ -184,7 +182,7 @@ class BatteryIncoming(SensorEntity):
         
 class BatteryOutgoing(SensorEntity):
     _attr_name = "E3DC Battery Outgoing"
-    _attr_native_unit_of_measurement = POWER_WATT
+    _attr_native_unit_of_measurement = UnitOfPower.WATT
     _attr_device_class = SensorDeviceClass.POWER
     _attr_state_class = SensorStateClass.MEASUREMENT
 
@@ -215,7 +213,7 @@ class BatteryCharge(SensorEntity):
 #Grid values, consumption positive values, production negative values.     
 class GridConsumptionProduction(SensorEntity):
     _attr_name = "E3DC Grid Consumption Production"
-    _attr_native_unit_of_measurement = POWER_WATT
+    _attr_native_unit_of_measurement = UnitOfPower.WATT
     _attr_device_class = SensorDeviceClass.POWER
     _attr_state_class = SensorStateClass.MEASUREMENT
 
@@ -229,7 +227,7 @@ class GridConsumptionProduction(SensorEntity):
 #Battery values, incoming negative values, outgoing positive values.            
 class BatteryIncomingOutgoing(SensorEntity):
     _attr_name = "E3DC Battery Incoming Outgoing"
-    _attr_native_unit_of_measurement = POWER_WATT
+    _attr_native_unit_of_measurement = UnitOfPower.WATT
     _attr_device_class = SensorDeviceClass.POWER
     _attr_state_class = SensorStateClass.MEASUREMENT
 
@@ -243,7 +241,7 @@ class BatteryIncomingOutgoing(SensorEntity):
 # House consumption values, chagned to negative values.                    
 class HouseConsumptionNegative(SensorEntity):
     _attr_name = "E3DC House Consumption Negative"
-    _attr_native_unit_of_measurement = POWER_WATT
+    _attr_native_unit_of_measurement = UnitOfPower.WATT
     _attr_device_class = SensorDeviceClass.POWER
     _attr_state_class = SensorStateClass.MEASUREMENT
 
@@ -295,7 +293,7 @@ class DomesticConsumption(SensorEntity):
         solar_production = e3dc_status['production']['solar']
         battery_incoming = e3dc_status['consumption']['battery']
         grid_production = e3dc_status['production']['grid']
-        if grid_production < 0:
+        if grid_production < 0 and solar_production > 0 :
             self._attr_native_value = ( 1- (-grid_production/solar_production)) * 100
         else:
             self._attr_native_value = 100      
