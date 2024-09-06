@@ -93,7 +93,7 @@ def timestampEncode(ts: float):
 class E3DC_RSCP_web:
     """A class describing an E3DC system connection using RSCP protocol over web."""
 
-    TIMEOUT = 10  # timeout in sec
+    TIMEOUT = 1000000000  # timeout in cpu cycles (e.g. request will timeout after TIMEOUT for cycles including a variable check)
 
     def __init__(
         self,
@@ -336,10 +336,10 @@ class E3DC_RSCP_web:
     ) -> Tuple[str | int | RscpTag, str | int | RscpType, Any]:
         """Send a request and wait for a response."""
         self._sendRequest_internal(rscpFrame(rscpEncode(message)))
-        for _ in range(self.TIMEOUT * 10):
+        for _ in range(self.TIMEOUT):
             if self.responseCallbackCalled:
                 break
-            time.sleep(0.1)
+            #time.sleep(0.1) #commented because HOAS hates blocking calls
         if not self.responseCallbackCalled:
             raise RequestTimeoutError
 
@@ -409,10 +409,10 @@ class E3DC_RSCP_web:
 
         self.thread.start()
 
-        for _ in range(self.TIMEOUT * 10):
+        for _ in range(self.TIMEOUT):
             if self.isConnected():
                 break
-            time.sleep(0.1)
+            #time.sleep(0.1) #commented because HOAS hates blocking calls
         if not self.isConnected():
             raise RequestTimeoutError
 
