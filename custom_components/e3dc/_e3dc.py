@@ -3,15 +3,14 @@
 #
 # Copyright 2017 Francesco Santini <francesco.santini@gmail.com>
 # Licensed under a MIT license. See LICENSE for details
-from __future__ import annotations  # required for python < 3.9
-
 import datetime
 import hashlib
+import logging
 import struct
 import time
 import uuid
 from calendar import monthrange
-from typing import Any, Dict, List, Literal, Tuple
+from typing import Any, Literal
 
 from ._e3dc_rscp_local import (
     E3DC_RSCP_local,
@@ -22,6 +21,8 @@ from ._e3dc_rscp_local import (
 from ._e3dc_rscp_web import E3DC_RSCP_web
 from ._rscpLib import rscpFindTag, rscpFindTagIndex
 from ._rscpTags import RscpTag, RscpType, getStrPowermeterType, getStrPviType
+
+logger = logging.getLogger(__name__)
 
 REMOTE_ADDRESS = "https://s10.e3dc.com/s10/phpcmd/cmd.php"
 REQUEST_INTERVAL_SEC = 10  # minimum interval between requests
@@ -76,7 +77,8 @@ class E3DC:
             key (str): encryption key as set in the E3DC settings - required for CONNECT_LOCAL
             serialNumber (str): the serial number of the system to monitor - required for CONNECT_WEB
             isPasswordMd5 (bool): indicates whether the password is already md5 digest (recommended, default = True) - required for CONNECT_WEB
-            configuration (Optional[dict]): dict containing details of the E3DC configuration. {"pvis": [{"index": 0, "strings": 2, "phases": 3}], "powermeters": [{"index": 0}], "batteries": [{"index": 0, "dcbs": 1}]}
+            configuration (dict | None): dict containing details of the E3DC configuration. {"pvis": [{"index": 0, "strings": 2, "phases": 3}], "powermeters": [{"index": 0}], "batteries": [{"index": 0, "dcbs": 1}]}
+            port (int, optional): port number for local connection. Defaults to None, which means default port 5033 is used.
         """
         self.connectType = connectType
         self.username = kwargs["username"]
@@ -101,9 +103,9 @@ class E3DC:
         self.maxBatChargePower = None
         self.maxBatDischargePower = None
         self.startDischargeDefault = None
-        self.powermeters: List[Dict[str, Any]] = []
-        self.pvis: List[Dict[str, Any]] = []
-        self.batteries: List[Dict[str, Any]] = []
+        self.powermeters: list[dict[str, Any]] = []
+        self.pvis: list[dict[str, Any]] = []
+        self.batteries: list[dict[str, Any]] = []
         self.pmIndexExt = None
 
         if "configuration" in kwargs:
@@ -123,7 +125,10 @@ class E3DC:
             self.ip = kwargs["ipAddress"]
             self.key = kwargs["key"]
             self.password = kwargs["password"]
-            self.rscp = E3DC_RSCP_local(self.username, self.password, self.ip, self.key)
+            self.port = kwargs.get("port", None)
+            self.rscp = E3DC_RSCP_local(
+                self.username, self.password, self.ip, self.key, self.port
+            )
         else:
             self._set_serial(kwargs["serialNumber"])
             if "isPasswordMd5" in kwargs and not kwargs["isPasswordMd5"]:
@@ -199,10 +204,10 @@ class E3DC:
 
     def sendRequest(
         self,
-        request: Tuple[str | int | RscpTag, str | int | RscpType, Any],
+        request: tuple[str | int | RscpTag, str | int | RscpType, Any],
         retries: int = 3,
         keepAlive: bool = False,
-    ) -> Tuple[str | int | RscpTag, str | int | RscpType, Any]:
+    ) -> tuple[str | int | RscpTag, str | int | RscpType, Any]:
         """This function uses the RSCP interface to make a request.
 
         Does make retries in case of exceptions like Socket.Error
@@ -236,6 +241,7 @@ class E3DC:
                 retry += 1
                 if retry > retries:
                     raise SendError("Max retries reached")
+                logger.warning("Request failed, retrying (%d/%d)", retry, retries, exc_info=True)
 
         if not keepAlive:
             self.rscp.disconnect()
@@ -358,7 +364,7 @@ class E3DC:
         descList = switchDesc[2]  # get the payload of the container
         statusList = switchStatus[2]
 
-        switchList: List[Dict[str, Any]] = []
+        switchList: list[dict[str, Any]] = []
 
         for switch in range(len(descList)):
             switchID = rscpFindTagIndex(descList[switch], RscpTag.HA_DATAPOINT_INDEX)
@@ -459,10 +465,23 @@ class E3DC:
             (RscpTag.EMS_REQ_GET_IDLE_PERIODS, RscpType.NoneType, None),
             keepAlive=keepAlive,
         )
-        if idlePeriodsRaw[0] != RscpTag.EMS_GET_IDLE_PERIODS:
+
+        raw = idlePeriodsRaw[0]
+
+        if isinstance(raw, RscpTag):
+            tag = raw
+        elif isinstance(raw, str):
+            try:
+                tag = RscpTag[raw]
+            except KeyError:
+                return None
+        else:
             return None
 
-        idlePeriods: Dict[str, List[Dict[str, Any]]] = {
+        if tag != RscpTag.EMS_GET_IDLE_PERIODS:
+            return None
+
+        idlePeriods: dict[str, list[dict[str, Any]]] = {
             "idleCharge": [] * 7,
             "idleDischarge": [] * 7,
         }
@@ -493,7 +512,7 @@ class E3DC:
         return idlePeriods
 
     def set_idle_periods(
-        self, idlePeriods: Dict[str, List[Dict[str, Any]]], keepAlive: bool = False
+        self, idlePeriods: dict[str, list[dict[str, Any]]], keepAlive: bool = False
     ):
         """Set idle periods via rscp protocol.
 
@@ -542,7 +561,7 @@ class E3DC:
             True if success
             False if error
         """
-        periodList: List[Tuple[RscpTag, RscpType, Any]] = []
+        periodList: list[tuple[RscpTag, RscpType, Any]] = []
 
         if "idleCharge" not in idlePeriods and "idleDischarge" not in idlePeriods:
             raise ValueError("neither key idleCharge nor idleDischarge in object")
@@ -662,8 +681,8 @@ class E3DC:
                     else:
                         raise TypeError("period in " + idle_type + " is not a dict")
 
-                else:
-                    raise TypeError(idle_type + " is not a dict")
+            else:
+                raise TypeError(idle_type + " is not a dict")
 
         result = self.sendRequest(
             (RscpTag.EMS_REQ_SET_IDLE_PERIODS, RscpType.Container, periodList),
@@ -698,6 +717,8 @@ class E3DC:
                     "startTimestamp": <timestamp from which db data is fetched of>,
                     "stateOfCharge": <battery charge level in %>,
                     "solarProduction": <power production>,
+                    "pm0Production": <power production>,
+                    "pm1Production": <power production>,
                     "timespanSeconds": <timespan in seconds of which db data is collected>
                 }
         """
@@ -746,6 +767,8 @@ class E3DC:
                 response[2][0], RscpTag.DB_BAT_CHARGE_LEVEL
             ),
             "solarProduction": rscpFindTagIndex(response[2][0], RscpTag.DB_DC_POWER),
+            "pm0Production": rscpFindTagIndex(response[2][0], RscpTag.DB_PM_0_POWER),
+            "pm1Production": rscpFindTagIndex(response[2][0], RscpTag.DB_PM_1_POWER),
             "timespanSeconds": timespanSeconds,
         }
 
@@ -779,6 +802,8 @@ class E3DC:
                     "startDate": <date from which db data is fetched of>,
                     "stateOfCharge": <battery charge level in %>,
                     "solarProduction": <power production>,
+                    "pm0Production": <power production>,
+                    "pm1Production": <power production>,
                     "timespan": <timespan of which db data is collected>,
                     "timespanSeconds": <timespan in seconds of which db data is collected>
                 }
@@ -986,8 +1011,8 @@ class E3DC:
         """Polls the wallbox status via rscp protocol locally.
 
         Args:
-            wbIndex (Optional[int]): Index of the wallbox to poll data for
-            keepAlive (Optional[bool]): True to keep connection alive
+            wbIndex (int | None): Index of the wallbox to poll data for
+            keepAlive (bool | None): True to keep connection alive
 
         Returns:
             dict: Dictionary containing the wallbox status structured as follows::
@@ -1085,8 +1110,8 @@ class E3DC:
 
         Args:
             enable (bool): True to enable sun mode, otherwise false,
-            wbIndex (Optional[int]): index of the requested wallbox,
-            keepAlive (Optional[bool]): True to keep connection alive
+            wbIndex (int | None): index of the requested wallbox,
+            keepAlive (bool | None): True to keep connection alive
 
         Returns:
             True if success
@@ -1103,8 +1128,8 @@ class E3DC:
 
         Args:
             on (bool): True to activate the Schuko, otherwise false
-            wbIndex (Optional[int]): index of the requested wallbox,
-            keepAlive (Optional[bool]): True to keep connection alive
+            wbIndex (int | None): index of the requested wallbox,
+            keepAlive (bool | None): True to keep connection alive
 
         Returns:
             True if success (wallbox has understood the request, but might have ignored an unsupported value)
@@ -1121,8 +1146,8 @@ class E3DC:
 
         Args:
             max_charge_current (int): maximum allowed charge current in A
-            wbIndex (Optional[int]): index of the requested wallbox,
-            keepAlive (Optional[bool]): True to keep connection alive
+            wbIndex (int | None): index of the requested wallbox,
+            keepAlive (bool | None): True to keep connection alive
 
         Returns:
             True if success (wallbox has understood the request, but might have clipped the value)
@@ -1142,8 +1167,8 @@ class E3DC:
         """Toggles charging of the wallbox via rscp protocol locally.
 
         Args:
-            wbIndex (Optional[int]): index of the requested wallbox,
-            keepAlive (Optional[bool]): True to keep connection alive
+            wbIndex (int | None): index of the requested wallbox,
+            keepAlive (bool | None): True to keep connection alive
 
         Returns:
             True if success
@@ -1157,8 +1182,8 @@ class E3DC:
         """Toggles the number of phases used for charging by the wallbox between 1 and 3 via rscp protocol locally.
 
         Args:
-            wbIndex (Optional[int]): index of the requested wallbox,
-            keepAlive (Optional[bool]): True to keep connection alive
+            wbIndex (int | None): index of the requested wallbox,
+            keepAlive (bool | None): True to keep connection alive
 
         Returns:
             True if success
@@ -1175,15 +1200,15 @@ class E3DC:
         request: RscpTag = RscpTag.WB_REQ_SET_EXTERN,
         wbIndex: int = 0,
         keepAlive: bool = False,
-    ) -> Tuple[str | int | RscpTag, str | int | RscpType, Any]:
+    ) -> tuple[str | int | RscpTag, str | int | RscpType, Any]:
         """Sends a low-level request with WB_EXTERN_DATA to the wallbox via rscp protocol locally.
 
         Args:
             dataIndex (int): byte index in the WB_EXTERN_DATA array (values: 0-5)
             value (int): byte value to be set in the WB_EXTERN_DATA array at the given index
-            request (Optional[RscpTag]): request identifier (WB_REQ_SET_EXTERN, WB_REQ_SET_PARAM_1 or WB_REQ_SET_PARAM_2),
-            wbIndex (Optional[int]): index of the requested wallbox,
-            keepAlive (Optional[bool]): True to keep connection alive
+            request (RscpTag | None): request identifier (WB_REQ_SET_EXTERN, WB_REQ_SET_PARAM_1 or WB_REQ_SET_PARAM_2),
+            wbIndex (int | None): index of the requested wallbox,
+            keepAlive (bool | None): True to keep connection alive
 
         Returns:
             An object with the received data
@@ -1227,9 +1252,9 @@ class E3DC:
         Args:
             dataIndex (int): byte index in the WB_EXTERN_DATA array (values: 0-5)
             value (int): byte value to be set in the WB_EXTERN_DATA array at the given index
-            request (Optional[RscpTag]): request identifier (WB_REQ_SET_EXTERN, WB_REQ_SET_PARAM_1 or WB_REQ_SET_PARAM_2),
-            wbIndex (Optional[int]): index of the requested wallbox,
-            keepAlive (Optional[bool]): True to keep connection alive
+            request (RscpTag | None): request identifier (WB_REQ_SET_EXTERN, WB_REQ_SET_PARAM_1 or WB_REQ_SET_PARAM_2),
+            wbIndex (int | None): index of the requested wallbox,
+            keepAlive (bool | None): True to keep connection alive
 
         Returns:
             True if success
@@ -1252,7 +1277,7 @@ class E3DC:
 
         Args:
             enabled (bool): True to enable charging the car using the battery
-            keepAlive (Optional[bool]): True to keep connection alive
+            keepAlive (bool | None): True to keep connection alive
 
         Returns:
             True if success
@@ -1284,7 +1309,7 @@ class E3DC:
                 ]
         """
         maxBatteries = 8
-        outObj: List[Dict[str, int]] = []
+        outObj: list[dict[str, int]] = []
         for batIndex in range(maxBatteries):
             try:
                 req = self.sendRequest(
@@ -1316,14 +1341,14 @@ class E3DC:
     def get_battery_data(
         self,
         batIndex: int | None = None,
-        dcbs: List[int] | None = None,
+        dcbs: list[int] | None = None,
         keepAlive: bool = False,
     ):
         """Polls the battery data via rscp protocol.
 
         Args:
-            batIndex (Optional[int]): battery index
-            dcbs (Optional[list]): dcb list
+            batIndex (int | None): battery index
+            dcbs (list | None): dcb list
             keepAlive (bool): True to keep connection alive. Defaults to False.
 
         Returns:
@@ -1460,7 +1485,7 @@ class E3DC:
         dcbCount = rscpFindTagIndex(req, RscpTag.BAT_DCB_COUNT)
         deviceStateContainer = rscpFindTag(req, RscpTag.BAT_DEVICE_STATE)
 
-        outObj: Dict[str, Any] = {
+        outObj: dict[str, Any] = {
             "asoc": rscpFindTagIndex(req, RscpTag.BAT_ASOC),
             "chargeCycles": rscpFindTagIndex(req, RscpTag.BAT_CHARGE_CYCLES),
             "current": rscpFindTagIndex(req, RscpTag.BAT_CURRENT),
@@ -1545,9 +1570,9 @@ class E3DC:
 
             # Initialize default values for DCB
             sensorCount = 0
-            temperatures: List[float] = []
+            temperatures: list[float] = []
             seriesCellCount = 0
-            voltages: List[float] = []
+            voltages: list[float] = []
 
             # Set temperatures, if available for the device
             temperatures_raw = rscpFindTag(req, RscpTag.BAT_DCB_ALL_CELL_TEMPERATURES)
@@ -1558,7 +1583,11 @@ class E3DC:
             ):
                 temperatures_data = rscpFindTagIndex(temperatures_raw, RscpTag.BAT_DATA)
                 sensorCount = rscpFindTagIndex(info, RscpTag.BAT_DCB_NR_SENSOR)
-                for sensor in range(0, sensorCount):
+
+                # As sensorCount can return bigger values than we have actual temperatures_data,
+                # we use the smaller count for robustness.
+                sensors = min(sensorCount, len(temperatures_data))
+                for sensor in range(0, sensors):
                     temperatures.append(temperatures_data[sensor][2])
 
             # Set voltages, if available for the device
@@ -1569,11 +1598,10 @@ class E3DC:
                 and voltages_raw[1] != "Error"
             ):
                 voltages_data = rscpFindTagIndex(voltages_raw, RscpTag.BAT_DATA)
-                seriesCellCount = rscpFindTagIndex(info, RscpTag.BAT_DCB_NR_SERIES_CELL)
-                for cell in range(0, seriesCellCount):
-                    voltages.append(voltages_data[cell][2])
+                for cell_voltage in voltages_data:
+                    voltages.append(cell_voltage[2])
 
-            dcbobj: Dict[str, Any] = {
+            dcbobj: dict[str, Any] = {
                 "current": rscpFindTagIndex(info, RscpTag.BAT_DCB_CURRENT),
                 "currentAvg30s": rscpFindTagIndex(
                     info, RscpTag.BAT_DCB_CURRENT_AVG_30S
@@ -1642,12 +1670,12 @@ class E3DC:
         return outObj
 
     def get_batteries_data(
-        self, batteries: List[Dict[str, Any]] | None = None, keepAlive: bool = False
+        self, batteries: list[dict[str, Any]] | None = None, keepAlive: bool = False
     ):
         """Polls the batteries data via rscp protocol.
 
         Args:
-            batteries (Optional[dict]): batteries dict
+            batteries (dict | None): batteries dict
             keepAlive (bool): True to keep connection alive. Defaults to False.
 
         Returns:
@@ -1656,7 +1684,7 @@ class E3DC:
         if batteries is None:
             batteries = self.batteries
 
-        outObj: List[Dict[str, Any]] = []
+        outObj: list[dict[str, Any]] = []
 
         for battery in batteries:
             if "dcbs" in battery:
@@ -1690,7 +1718,7 @@ class E3DC:
                 ]
         """
         maxPvis = 8
-        outObj: List[Dict[str, Any]] = []
+        outObj: list[dict[str, Any]] = []
         for pviIndex in range(maxPvis):
             req = self.sendRequest(
                 (
@@ -1730,16 +1758,16 @@ class E3DC:
     def get_pvi_data(
         self,
         pviIndex: int | None = None,
-        strings: List[int] | None = None,
-        phases: List[int] | None = None,
+        strings: list[int] | None = None,
+        phases: list[int] | None = None,
         keepAlive: bool = False,
     ):
         """Polls the inverter data via rscp protocol.
 
         Args:
             pviIndex (int): pv inverter index
-            strings (Optional[list]): string list
-            phases (Optional[list]): phase list
+            strings (list | None): string list
+            phases (list | None): phase list
             keepAlive (bool): True to keep connection alive. Defaults to False.
 
         Returns:
@@ -1848,7 +1876,7 @@ class E3DC:
         frequency = rscpFindTag(req, RscpTag.PVI_FREQUENCY_UNDER_OVER)
         deviceState = rscpFindTag(req, RscpTag.PVI_DEVICE_STATE)
 
-        outObj: Dict[str, Any] = {
+        outObj: dict[str, Any] = {
             "acMaxApparentPower": rscpFindTagIndex(
                 rscpFindTag(req, RscpTag.PVI_AC_MAX_APPARENTPOWER), RscpTag.PVI_VALUE
             ),
@@ -2027,12 +2055,12 @@ class E3DC:
         return outObj
 
     def get_pvis_data(
-        self, pvis: List[Dict[str, Any]] | None = None, keepAlive: bool = False
+        self, pvis: list[dict[str, Any]] | None = None, keepAlive: bool = False
     ):
         """Polls the inverters data via rscp protocol.
 
         Args:
-            pvis (Optional[dict]): pvis dict
+            pvis (dict | None): pvis dict
             keepAlive (bool): True to keep connection alive. Defaults to False.
 
         Returns:
@@ -2041,7 +2069,7 @@ class E3DC:
         if pvis is None:
             pvis = self.pvis
 
-        outObj: List[Dict[str, Any]] = []
+        outObj: list[dict[str, Any]] = []
 
         for pvi in pvis:
             if "strings" in pvi:
@@ -2082,7 +2110,7 @@ class E3DC:
                 ]
         """
         maxPowermeters = 8
-        outObj: List[Dict[str, Any]] = []
+        outObj: list[dict[str, Any]] = []
         for pmIndex in range(
             maxPowermeters
         ):  # max 8 powermeters according to E3DC spec
@@ -2115,7 +2143,7 @@ class E3DC:
         """Polls the power meter data via rscp protocol.
 
         Args:
-            pmIndex (Optional[int]): power meter index
+            pmIndex (int | None): power meter index
             keepAlive (bool): True to keep connection alive. Defaults to False.
 
         Returns:
@@ -2199,12 +2227,12 @@ class E3DC:
         return outObj
 
     def get_powermeters_data(
-        self, powermeters: List[Dict[str, Any]] | None = None, keepAlive: bool = False
+        self, powermeters: list[dict[str, Any]] | None = None, keepAlive: bool = False
     ):
         """Polls the powermeters data via rscp protocol.
 
         Args:
-            powermeters (Optional[dict]): powermeters dict
+            powermeters (dict | None): powermeters dict
             keepAlive (bool): True to keep connection alive. Defaults to False.
 
         Returns:
@@ -2213,7 +2241,7 @@ class E3DC:
         if powermeters is None:
             powermeters = self.powermeters
 
-        outObj: List[Dict[str, Any]] = []
+        outObj: list[dict[str, Any]] = []
 
         for powermeter in powermeters:
             outObj.append(
@@ -2286,9 +2314,9 @@ class E3DC:
 
         Args:
             enable (bool): True/False
-            max_charge (Optional[int]): maximum charge power
-            max_discharge (Optional[int]: maximum discharge power
-            discharge_start (Optional[int]: power where discharged is started
+            max_charge (int | None): maximum charge power
+            max_discharge (int | None): maximum discharge power
+            discharge_start (int | None): power where discharged is started
             keepAlive (bool): True to keep connection alive. Defaults to False.
 
         Returns:

@@ -4,13 +4,12 @@
 # Copyright 2017 Francesco Santini <francesco.santini@gmail.com>
 # Licensed under a MIT license. See LICENSE for details
 
-from __future__ import annotations  # required for python < 3.9
-
+import logging
 import math
 import struct
 import time
 import zlib
-from typing import Any, List, Tuple
+from typing import Any, TypeAlias, cast
 
 from ._rscpTags import (
     RscpTag,
@@ -22,6 +21,11 @@ from ._rscpTags import (
     getStrRscpTag,
     getStrRscpType,
 )
+
+# Type alias for RSCP messages
+RscpMessage: TypeAlias = tuple[str | int | RscpTag, str | int | RscpType, Any]
+
+logger = logging.getLogger(__name__)
 
 DEBUG_DICT = {"print_rscp": False}
 
@@ -36,6 +40,7 @@ def set_debug(debug: bool):
         Nothing
     """
     DEBUG_DICT["print_rscp"] = debug
+    logger.setLevel(logging.DEBUG if debug else logging.WARNING)
 
 
 packFmtDict_FixedSize = {
@@ -62,9 +67,9 @@ packFmtDict_VarSize = {
 
 
 def rscpFindTag(
-    decodedMsg: Tuple[str | int | RscpTag, str | int | RscpType, Any] | None,
+    decodedMsg: RscpMessage | None,
     tag: int | str | RscpTag,
-) -> Tuple[str | int | RscpTag, str | int | RscpType, Any] | None:
+) -> RscpMessage | None:
     """Finds a submessage with a specific tag.
 
     Args:
@@ -85,9 +90,7 @@ def rscpFindTag(
     if decodedMsg[0] == tagStr:
         return decodedMsg
     if isinstance(decodedMsg[2], list):
-        msgList: List[Tuple[str | int | RscpTag, str | int | RscpType, Any]] = (
-            decodedMsg[2]
-        )
+        msgList: list[RscpMessage] = cast(list[RscpMessage], decodedMsg[2])
         for msg in msgList:
             msgValue = rscpFindTag(msg, tag)
             if msgValue is not None:
@@ -96,7 +99,7 @@ def rscpFindTag(
 
 
 def rscpFindTagIndex(
-    decodedMsg: Tuple[str | int | RscpTag, str | int | RscpType, Any] | None,
+    decodedMsg: RscpMessage | None,
     tag: int | str | RscpTag,
     index: int = 2,
 ) -> Any:
@@ -129,7 +132,7 @@ class FrameError(Exception):
 
 
 def rscpEncode(
-    tag: int | str | RscpTag | Tuple[str | int | RscpTag, str | int | RscpType, Any],
+    tag: int | str | RscpTag | RscpMessage,
     rscptype: int | str | RscpType | None = None,
     data: Any = None,
 ) -> bytes:
@@ -145,8 +148,8 @@ def rscpEncode(
     rscptypeHex = getHexRscpType(rscptype)
     rscptype = getRscpType(rscptype)
 
-    if DEBUG_DICT["print_rscp"]:
-        print(">", tag, rscptype, data)
+    loggable_data = '<redacted>' if tag in (RscpTag.SERVER_PASSWD, RscpTag.SERVER_USER ) else data
+    logger.debug("> %s %s %s", tag, rscptype, loggable_data)
 
     if isinstance(data, str):
         data = data.encode("utf-8")
@@ -174,7 +177,7 @@ def rscpEncode(
     elif rscptype == RscpType.Container:
         if isinstance(data, list):
             newData = b""
-            dataList: List[Tuple[str | int | RscpTag, str | int | RscpType, Any]] = data
+            dataList: list[RscpMessage] = cast(list[RscpMessage], data)
             for dataChunk in dataList:
                 newData += rscpEncode(
                     dataChunk[0], dataChunk[1], dataChunk[2]
@@ -208,27 +211,43 @@ def rscpFrame(data: bytes) -> bytes:
 
 def rscpFrameDecode(frameData: bytes, returnFrameLen: bool = False):
     """Decodes RSCP Frame."""
-    headerFmt = "<HHIIIH"
     crcFmt = "I"
     crc = None
 
-    magic, ctrl, sec1, _, ns, length = struct.unpack(
-        headerFmt, frameData[: struct.calcsize(headerFmt)]
-    )
+    # Peek at ctrl to determine frame format
+    _, ctrl_raw = struct.unpack("<HH", frameData[:4])
+    ctrl_peek = endianSwapUint16(ctrl_raw)
 
-    magic = endianSwapUint16(magic)
-    ctrl = endianSwapUint16(ctrl)
+    if ctrl_peek & 0x02:
+        # Compact format (protocol v2): no timestamp, 32-bit length
+        # Header: magic(2) + ctrl(2) + length(4) = 8 bytes
+        headerFmt = "<HHI"
+        magic, ctrl, length = struct.unpack(headerFmt, frameData[: struct.calcsize(headerFmt)])
+        magic = endianSwapUint16(magic)
+        ctrl = endianSwapUint16(ctrl)
+        timestamp = 0.0
+    else:
+        # Standard format: magic(2) + ctrl(2) + sec1(4) + sec2(4) + ns(4) + length(2) = 18 bytes
+        headerFmt = "<HHIIIH"
+        magic, ctrl, sec1, _, ns, length = struct.unpack(
+            headerFmt, frameData[: struct.calcsize(headerFmt)]
+        )
+        magic = endianSwapUint16(magic)
+        ctrl = endianSwapUint16(ctrl)
+        timestamp = sec1 + float(ns) / 1000
+
+    headerSize = struct.calcsize(headerFmt)
 
     if ctrl & 0x10:  # crc enabled
-        totalLen = struct.calcsize(headerFmt) + length + struct.calcsize(crcFmt)
+        totalLen = headerSize + length + struct.calcsize(crcFmt)
         data, crc = struct.unpack(
             "<" + str(length) + "s" + crcFmt,
-            frameData[struct.calcsize(headerFmt) : totalLen],
+            frameData[headerSize : totalLen],
         )
     else:
-        totalLen = struct.calcsize(headerFmt) + length
+        totalLen = headerSize + length
         data = struct.unpack(
-            "<" + str(length) + "s", frameData[struct.calcsize(headerFmt) : totalLen]
+            "<" + str(length) + "s", frameData[headerSize : totalLen]
         )[0]
 
     # check crc
@@ -239,7 +258,6 @@ def rscpFrameDecode(frameData: bytes, returnFrameLen: bool = False):
         if crcCalc != crc:
             raise FrameError("CRC32 not validated")
 
-    timestamp = sec1 + float(ns) / 1000
     if returnFrameLen:
         return data, timestamp, totalLen
     else:
@@ -248,7 +266,7 @@ def rscpFrameDecode(frameData: bytes, returnFrameLen: bool = False):
 
 def rscpDecode(
     data: bytes,
-) -> Tuple[Tuple[str | int | RscpTag, str | int | RscpType, Any], int]:
+) -> tuple[RscpMessage, int]:
     """Decodes RSCP data."""
     headerFmt = (
         "<IBH"  # format of header: little-endian, Uint32 tag, Uint8 type, Uint16 length
@@ -273,7 +291,7 @@ def rscpDecode(
 
     if type_ == RscpType.Container:
         # this is a container: parse the inside
-        dataList: List[Tuple[str | int | RscpTag, str | int | RscpType, Any]] = []
+        dataList: list[RscpMessage] = []
         curByte = headerSize
         while curByte < headerSize + length:
             innerData, usedLength = rscpDecode(data[curByte:])
@@ -306,7 +324,6 @@ def rscpDecode(
         # ignore none utf-8 bytes
         val = val.decode("utf-8", "ignore")
 
-    if DEBUG_DICT["print_rscp"]:
-        print("<", strTag, strType, val)
+    logger.debug("< %s %s %s", strTag, strType, val)
 
-    return (strTag, strType, val), headerSize + struct.calcsize(fmt)
+    return (strTag, strType, val), headerSize + length

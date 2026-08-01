@@ -3,19 +3,19 @@
 #
 # Copyright 2017 Francesco Santini <francesco.santini@gmail.com>
 # Licensed under a MIT license. See LICENSE for details
-from __future__ import annotations  # required for python < 3.9
-
 import datetime
 import hashlib
+import logging
 import struct
 import threading
 import time
-from typing import Any, Callable, Tuple
+from typing import Callable
 
 import tzlocal
 from websocket import ABNF, WebSocketApp
 
 from ._rscpLib import (
+    RscpMessage,
     rscpDecode,
     rscpEncode,
     rscpFindTag,
@@ -24,6 +24,8 @@ from ._rscpLib import (
     rscpFrameDecode,
 )
 from ._rscpTags import RscpTag, RscpType, getRscpTag
+
+logger = logging.getLogger(__name__)
 
 """
  The connection works the following way: (> outgoing, < incoming)
@@ -93,7 +95,7 @@ def timestampEncode(ts: float):
 class E3DC_RSCP_web:
     """A class describing an E3DC system connection using RSCP protocol over web."""
 
-    TIMEOUT = 1000000000  # timeout in cpu cycles (e.g. request will timeout after TIMEOUT for cycles including a variable check)
+    TIMEOUT = 10  # timeout in sec
 
     def __init__(
         self,
@@ -122,7 +124,7 @@ class E3DC_RSCP_web:
             REMOTE_ADDRESS,
             on_message=lambda _, msg: self.on_message(msg),
             on_close=lambda _ws, _, __: self.reset(),
-            on_error=lambda _ws, _: self.reset(),
+            on_error=lambda _ws, err: (logger.warning("WebSocket error: %s", err) or self.reset())
         )
         self.reset()
 
@@ -134,14 +136,13 @@ class E3DC_RSCP_web:
         self.virtConId = None
         self.virtAuthLevel = None
         self.webSerialno = None
-        self.responseCallback: Callable[
-            [Tuple[str | int | RscpTag, str | int | RscpType, Any]], None
-        ]
+        self.responseCallback: Callable[[RscpMessage], None]
         self.responseCallbackCalled = False
-        self.requestResult: Tuple[str | int | RscpTag, str | int | RscpType, Any]
+        self.requestResult: RscpMessage
 
     def buildVirtualConn(self):
         """Method to create Virtual Connection."""
+        logger.debug("Requesting virtual connection for %s", self.serialNumberWithPrefix)
         virtualConn = rscpFrame(
             rscpEncode(
                 RscpTag.SERVER_REQ_NEW_VIRTUAL_CONNECTION,
@@ -163,9 +164,7 @@ class E3DC_RSCP_web:
         # print("--------------------- Sending virtual conn")
         self.ws.send(virtualConn, ABNF.OPCODE_BINARY)
 
-    def respondToINFORequest(
-        self, decoded: Tuple[str | int | RscpTag, str | int | RscpType, Any]
-    ):
+    def respondToINFORequest(self, decoded: RscpMessage):
         """Create Response to INFO request."""
         TIMEZONE_STR, utcDiffS = calcTimeZone()
 
@@ -230,16 +229,20 @@ class E3DC_RSCP_web:
             return ""
         return None  # this is no standard request
 
-    def registerConnectionHandler(
-        self, decodedMsg: Tuple[str | int | RscpTag, str | int | RscpType, Any]
-    ):
+    def registerConnectionHandler(self, decodedMsg: RscpMessage):
         """Registering Connection Handler."""
         if self.conId == 0:
             self.conId = rscpFindTagIndex(decodedMsg, RscpTag.SERVER_CONNECTION_ID)
             self.authLevel = rscpFindTagIndex(decodedMsg, RscpTag.SERVER_AUTH_LEVEL)
+            logger.debug("Initial connection registered: conId=%s authLevel=%s", self.conId, self.authLevel)
         else:
             self.virtConId = rscpFindTagIndex(decodedMsg, RscpTag.SERVER_CONNECTION_ID)
             self.virtAuthLevel = rscpFindTagIndex(decodedMsg, RscpTag.SERVER_AUTH_LEVEL)
+            if self.virtConId == -1:
+                logger.error("Authentication failed: server rejected credentials")
+                self.virtConId = None
+            else:
+                logger.debug("Virtual connection registered: virtConId=%s virtAuthLevel=%s", self.virtConId, self.virtAuthLevel)
         # reply = rscpFrame(rscpEncode(RscpTag.SERVER_CONNECTION_REGISTERED, RscpType.Container, [decodedMsg[2][0], decodedMsg[2][1]]));
         reply = rscpFrame(
             rscpEncode(
@@ -267,7 +270,12 @@ class E3DC_RSCP_web:
             raise
 
         # print "Decoded received message", decodedMsg
-        if tag == RscpTag.SERVER_REQ_PING:
+        if tag == RscpTag.RSCP_REQ_SET_PROTOCOL_VERSION:
+            logger.debug("Protocol version request: v%s, acknowledging", decodedMsg[2])
+            reply = rscpFrame(rscpEncode(RscpTag.RSCP_SET_PROTOCOL_VERSION, decodedMsg[1], decodedMsg[2]))
+            self.ws.send(reply, ABNF.OPCODE_BINARY)
+            return
+        elif tag == RscpTag.SERVER_REQ_PING:
             pingFrame = rscpFrame(
                 rscpEncode(RscpTag.SERVER_PING, RscpType.NoneType, None)
             )
@@ -279,8 +287,7 @@ class E3DC_RSCP_web:
         elif tag == RscpTag.SERVER_REGISTER_CONNECTION:
             self.registerConnectionHandler(decodedMsg)
         elif tag == RscpTag.SERVER_UNREGISTER_CONNECTION:
-            # this signifies some error
-            self.disconnect()
+            logger.warning("Server unregistered connection")
         elif tag == RscpTag.SERVER_REQ_RSCP_CMD:
             data = rscpFrameDecode(
                 rscpFindTagIndex(decodedMsg, RscpTag.SERVER_RSCP_DATA)
@@ -326,43 +333,35 @@ class E3DC_RSCP_web:
                 ABNF.OPCODE_BINARY,
             )
 
-    def _defaultRequestCallback(
-        self, msg: Tuple[str | int | RscpTag, str | int | RscpType, Any]
-    ):
+    def _defaultRequestCallback(self, msg: RscpMessage):
         self.requestResult = msg
 
-    def sendRequest(
-        self, message: Tuple[str | int | RscpTag, str | int | RscpType, Any]
-    ) -> Tuple[str | int | RscpTag, str | int | RscpType, Any]:
+    def sendRequest(self, message: RscpMessage) -> RscpMessage:
         """Send a request and wait for a response."""
         self._sendRequest_internal(rscpFrame(rscpEncode(message)))
-        for _ in range(self.TIMEOUT):
+        for _ in range(self.TIMEOUT * 10):
             if self.responseCallbackCalled:
                 break
-            #time.sleep(0.1) #commented because HOAS hates blocking calls
+            time.sleep(0.1)
         if not self.responseCallbackCalled:
+            logger.warning("Request timed out after %s seconds", self.TIMEOUT)
             raise RequestTimeoutError
 
         return self.requestResult
 
-    def sendCommand(
-        self, message: Tuple[str | int | RscpTag, str | int | RscpType, Any]
-    ):
+    def sendCommand(self, message: RscpMessage):
         """Send a command."""
         return self._sendRequest_internal(rscpFrame(rscpEncode(message)))
 
     def _sendRequest_internal(
         self,
-        innerFrame: bytes | Tuple[str | int | RscpTag, str | int | RscpType, Any],
-        callback: (
-            Callable[[Tuple[str | int | RscpTag, str | int | RscpType, Any]], None]
-            | None
-        ) = None,
+        innerFrame: bytes | RscpMessage,
+        callback: Callable[[RscpMessage], None] | None = None,
     ):
         """Internal send request method.
 
         Args:
-            innerFrame (Union[tuple, <RSCP encoded frame>]): inner frame
+            innerFrame (tuple | bytes): inner frame
             callback (str): callback method
             synchronous (bool): If True, the method waits for a response (i.e. exits after calling callback).
                 If True and callback = None, the method returns the (last) response message
@@ -409,11 +408,12 @@ class E3DC_RSCP_web:
 
         self.thread.start()
 
-        for _ in range(self.TIMEOUT):
+        for _ in range(self.TIMEOUT * 10):
             if self.isConnected():
                 break
-            #time.sleep(0.1) #commented because HOAS hates blocking calls
+            time.sleep(0.1)
         if not self.isConnected():
+            logger.warning("Connection timed out after %s seconds", self.TIMEOUT)
             raise RequestTimeoutError
 
     def disconnect(self):
