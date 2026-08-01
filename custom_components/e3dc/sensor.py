@@ -45,7 +45,16 @@ async def async_setup_platform(
     SERIALNUMBER = str(config['serial_number'])
     CONFIG = {"powermeters": [{"index": config['power_meters_index']}]}
 
-    e3dc_api = E3DC(E3DC.CONNECT_WEB, username=USERNAME, password=PASS, serialNumber = SERIALNUMBER, isPasswordMd5=True, configuration = CONFIG)
+    e3dc_api = await hass.async_add_executor_job(
+        lambda: E3DC(
+            E3DC.CONNECT_WEB,
+            username=USERNAME,
+            password=PASS,
+            serialNumber=SERIALNUMBER,
+            isPasswordMd5=True,
+            configuration=CONFIG,
+        )
+    )
     e3dc_data = E3DCData()
     
     async_add_entities(
