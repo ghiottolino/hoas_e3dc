@@ -22,7 +22,7 @@ import voluptuous as vol
 from homeassistant.components.recorder import get_instance
 from homeassistant.components.recorder.statistics import (
     async_import_statistics,
-    get_last_statistics,
+    statistics_during_period,
 )
 from homeassistant.const import PERCENTAGE, UnitOfPower
 from homeassistant.core import HomeAssistant, ServiceCall
@@ -61,6 +61,10 @@ SENSOR_MAP = [
     ("consumed_production", "sensor.e3dc_domestic_consumption", "E3DC Domestic Consumption", PERCENTAGE),
 ]
 
+# Used to check whether a day already has data - any one sensor is
+# representative since all are created and polled together.
+_REFERENCE_STATISTIC_ID = SENSOR_MAP[0][1]
+
 
 def _build_metadata(statistic_id: str, name: str, unit: str) -> dict:
     metadata = {
@@ -93,16 +97,15 @@ def _day_start_utc(day: datetime.date) -> datetime.datetime:
     return dt_util.as_utc(local_midnight).replace(minute=0, second=0, microsecond=0)
 
 
-async def _last_backfilled_day(hass: HomeAssistant, statistic_id: str) -> datetime.date | None:
-    def _query() -> datetime.date | None:
-        result = get_last_statistics(hass, 1, statistic_id, True, {"mean"})
-        rows = result.get(statistic_id)
-        if not rows:
-            return None
-        start = rows[0]["start"]
-        if isinstance(start, (int, float)):
-            start = dt_util.utc_from_timestamp(start)
-        return dt_util.as_local(start).date()
+async def _day_has_data(hass: HomeAssistant, day: datetime.date) -> bool:
+    start = _day_start_utc(day)
+    end = start + datetime.timedelta(days=1)
+
+    def _query() -> bool:
+        result = statistics_during_period(
+            hass, start, end, {_REFERENCE_STATISTIC_ID}, "hour", None, {"mean"}
+        )
+        return bool(result.get(_REFERENCE_STATISTIC_ID))
 
     return await get_instance(hass).async_add_executor_job(_query)
 
@@ -121,45 +124,58 @@ async def _fetch_day(hass: HomeAssistant, e3dc_api, day: datetime.date) -> dict 
 async def async_run_backfill(
     hass: HomeAssistant,
     e3dc_api,
-    max_days_back: int = 45,
+    max_days_back: int = 31,
     start_date: datetime.date | None = None,
     end_date: datetime.date | None = None,
 ) -> None:
     """Backfill missing past days of E3DC data as long-term statistics.
 
-    With no explicit start_date/end_date, this fills the gap between the
-    last known statistic and yesterday, bounded by max_days_back - this is
-    what runs automatically on every HA startup and is a no-op once caught
-    up. Pass explicit dates (e.g. via the backfill_days service) to force a
-    specific range, overwriting any existing statistics in it.
+    With no explicit start_date/end_date, this checks every day between
+    max_days_back and yesterday and backfills whichever ones have no
+    statistics yet - this is what runs automatically on every HA startup and
+    is a no-op once caught up. Pass explicit dates (e.g. via the
+    backfill_days service) to force a specific range, overwriting any
+    existing statistics in it without checking first.
     """
+    forced_range = start_date is not None
+    _LOGGER.info(
+        "E3DC backfill: starting%s (max_days_back=%s, start_date=%s, end_date=%s)",
+        " (forced range)" if forced_range else "",
+        max_days_back,
+        start_date,
+        end_date,
+    )
+
     today = dt_util.now().date()
     yesterday = today - datetime.timedelta(days=1)
-    oldest_allowed = today - datetime.timedelta(days=max_days_back)
-
     if start_date is None:
-        reference_statistic_id = SENSOR_MAP[0][1]
-        last_day = await _last_backfilled_day(hass, reference_statistic_id)
-        start_date = oldest_allowed if last_day is None else last_day + datetime.timedelta(days=1)
-        start_date = max(start_date, oldest_allowed)
+        start_date = today - datetime.timedelta(days=max_days_back)
     if end_date is None:
         end_date = yesterday
 
     if start_date > end_date:
-        _LOGGER.debug("E3DC backfill: no gap to fill")
+        _LOGGER.debug("E3DC backfill: nothing to check, start date %s is after end date %s", start_date, end_date)
         return
 
-    _LOGGER.info("E3DC backfill: fetching %s to %s from the E3DC archive", start_date, end_date)
-
     per_sensor_stats: dict[str, list[dict]] = {statistic_id: [] for _, statistic_id, _, _ in SENSOR_MAP}
+    first_fetch = True
+    days_backfilled = 0
+
     day = start_date
-    first_day = True
     while day <= end_date:
+        _LOGGER.info("E3DC backfill: testing day %s", day)
+
+        if not forced_range and await _day_has_data(hass, day):
+            day += datetime.timedelta(days=1)
+            continue
+
+        _LOGGER.info("E3DC backfill: day %s has no data, backfilling from the E3DC archive", day)
+
         data = await _fetch_day(hass, e3dc_api, day)
         if data is not None:
-            if first_day:
+            if first_fetch:
                 _LOGGER.info("E3DC backfill: sample archive data for %s: %s", day, data)
-                first_day = False
+                first_fetch = False
             day_start = _day_start_utc(day)
             for field, statistic_id, _, _ in SENSOR_MAP:
                 value = data.get(field)
@@ -168,6 +184,7 @@ async def async_run_backfill(
                     per_sensor_stats[statistic_id].append(
                         {"start": day_start, "mean": value, "min": value, "max": value}
                     )
+            days_backfilled += 1
         day += datetime.timedelta(days=1)
 
     for field, statistic_id, name, unit in SENSOR_MAP:
@@ -175,7 +192,7 @@ async def async_run_backfill(
         if stats:
             async_import_statistics(hass, _build_metadata(statistic_id, name, unit), stats)
 
-    _LOGGER.info("E3DC backfill: done")
+    _LOGGER.info("E3DC backfill: done, backfilled %s day(s)", days_backfilled)
 
 
 def async_register_backfill_service(hass: HomeAssistant, domain: str, e3dc_api, max_days_back: int) -> None:
