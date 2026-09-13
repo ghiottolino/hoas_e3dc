@@ -1,0 +1,21 @@
+backfill_days:
+  name: Backfill days
+  description: >-
+    Fetch past days from the E3DC's own archive and import them as long-term
+    statistics for the E3DC sensors. With no fields set, fills the gap
+    between the last known statistic and yesterday (bounded by
+    backfill_max_days). Pass start_date/end_date to force a specific range,
+    overwriting any existing statistics in it.
+  fields:
+    start_date:
+      name: Start date
+      description: First day to backfill (inclusive). Defaults to right after the last known day.
+      example: "2026-08-01"
+      selector:
+        date:
+    end_date:
+      name: End date
+      description: Last day to backfill (inclusive). Defaults to yesterday.
+      example: "2026-08-31"
+      selector:
+        date:

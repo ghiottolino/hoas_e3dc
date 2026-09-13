@@ -25,6 +25,7 @@ from homeassistant.helpers.update_coordinator import (
 
 from .const import DOMAIN
 from ._e3dc import E3DC
+from .backfill import async_register_backfill_service, async_run_backfill
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -44,6 +45,8 @@ async def async_setup_platform(
     PASS = config['md5_pass']
     SERIALNUMBER = str(config['serial_number'])
     CONFIG = {"powermeters": [{"index": config['power_meters_index']}]}
+    BACKFILL = config.get('backfill', True)
+    BACKFILL_MAX_DAYS = config.get('backfill_max_days', 45)
 
     e3dc_api = await hass.async_add_executor_job(
         lambda: E3DC(
@@ -61,6 +64,12 @@ async def async_setup_platform(
         #[HouseConsumpion(coordinator), GridConsumption(e3dc_api)]
         [E3DCSensor(e3dc_api, e3dc_data), GridProduction(e3dc_data), SolarProduction(e3dc_data),GridConsumption(e3dc_data),HouseConsumption(e3dc_data), WallboxConsumption(e3dc_data), BatteryIncoming(e3dc_data),BatteryOutgoing(e3dc_data),BatteryCharge(e3dc_data),GridConsumptionProduction(e3dc_data),BatteryIncomingOutgoing(e3dc_data),HouseConsumptionNegative(e3dc_data),Autarky(e3dc_data),DomesticConsumption(e3dc_data)]
     )
+
+    async_register_backfill_service(hass, DOMAIN, e3dc_api, BACKFILL_MAX_DAYS)
+    if BACKFILL:
+        hass.async_create_task(
+            async_run_backfill(hass, e3dc_api, max_days_back=BACKFILL_MAX_DAYS)
+        )
 
 
 class E3DCData():

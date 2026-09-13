@@ -22,9 +22,33 @@ sensor:
     md5_pass: YOUR_E3DC_MD5_PASSWORD
     serial_number: YOUR_SERIAL_NUMBER
     power_meters_index: 6
+    backfill: true
+    backfill_max_days: 31
 ```
 
 see [python-e3dc web connection configuration](https://github.com/fsantini/python-e3dc/blob/master/README.md#web-connection).
+
+# Backfilling missing days
+
+The E3DC system keeps its own daily archive independently of whether Home
+Assistant was actually polling it. On every HA startup (unless `backfill:
+false` is set), the integration checks each sensor's long-term statistics for
+a gap since its last recorded day and fills it in from that archive, up to
+`backfill_max_days` (default 31) days back. Only day-level resolution is
+reconstructed (one value per missing day), which is enough to keep
+daily/weekly/monthly history and the Energy dashboard's power graphs
+gap-free, but an hour-zoomed history graph will show a single populated hour
+per backfilled day rather than a smooth curve.
+
+To force a specific range (e.g. a known outage window older than
+`backfill_max_days`), call the `e3dc.backfill_days` service from Developer
+Tools > Actions with `start_date`/`end_date`, or leave them empty to re-run
+the automatic gap-fill on demand.
+
+Note this only backfills sensors created by this integration (solar/grid/house/battery
+power, battery charge, autarky, domestic consumption) - it does not
+reconstruct the cumulative kWh `integration:` sensors described below, since
+those belong to a separate integration.
 
 # Usage with Home Assistant Energy 
 
