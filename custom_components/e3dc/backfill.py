@@ -66,6 +66,17 @@ SENSOR_MAP = [
 _REFERENCE_STATISTIC_ID = SENSOR_MAP[0][1]
 
 
+def _unit_class_for(unit: str) -> str | None:
+    try:
+        from homeassistant.components.recorder.statistics import (
+            STATISTIC_UNIT_TO_UNIT_CONVERTER,
+        )
+    except ImportError:
+        return None
+    converter = STATISTIC_UNIT_TO_UNIT_CONVERTER.get(unit)
+    return converter.UNIT_CLASS if converter else None
+
+
 def _build_metadata(statistic_id: str, name: str, unit: str) -> dict:
     metadata = {
         "has_mean": True,
@@ -74,6 +85,7 @@ def _build_metadata(statistic_id: str, name: str, unit: str) -> dict:
         "source": "recorder",
         "statistic_id": statistic_id,
         "unit_of_measurement": unit,
+        "unit_class": _unit_class_for(unit),
     }
     try:
         # HA >= 2024.9 additionally wants mean_type; older versions ignore
