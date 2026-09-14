@@ -21,10 +21,18 @@ backfilled from that Wh figure:
     whichever cumulative total already exists so newly backfilled days
     connect cleanly with real data before/after the gap.
 
-Only day-level resolution is reconstructed: one statistics row per missing
-day. This is enough for daily/weekly/monthly rollups and the Energy dashboard
-to be correct, but an hour-zoomed history graph will show a single populated
-hour per backfilled day rather than a smooth 24-hour curve.
+Only day-level resolution is reconstructed - all 24 hourly rows for a missing
+day get the same value (the day's average, or for `sum` stats the day-end
+cumulative total). Writing the full 24 hours, not just one, matters even
+though the source data has no finer resolution: Home Assistant's recorder
+keeps compiling hourly `sum` stats for a sensor even while it isn't updating
+(it carries the last known total forward), so an outage day can already have
+24 stale-but-real rows sitting at the pre-outage total. Writing only one row
+would leave the other 23 in place and, once the Energy dashboard diffs
+consecutive hours, show a spike followed by a matching negative spike instead
+of that day's real total. An hour-zoomed history graph will show a flat line
+for a backfilled day rather than its true intra-day shape, but daily/weekly/
+monthly rollups and the Energy dashboard are correct.
 """
 from __future__ import annotations
 
@@ -71,10 +79,6 @@ SENSOR_MAP = [
     ("autarky", "sensor.e3dc_autarky", "E3DC Autarky", PERCENTAGE, False),
     ("consumed_production", "sensor.e3dc_domestic_consumption", "E3DC Domestic Consumption", PERCENTAGE, False),
 ]
-
-# Used to check whether a day already has data - any one sensor is
-# representative since all are created and polled together.
-_REFERENCE_STATISTIC_ID = SENSOR_MAP[0][1]
 
 # get_db_data() field -> the Energy dashboard sensor it feeds, per the
 # `integration:` (Riemann sum) sensors documented in the README. These
@@ -140,15 +144,23 @@ def _day_start_utc(day: datetime.date) -> datetime.datetime:
     return dt_util.as_utc(local_midnight).replace(minute=0, second=0, microsecond=0)
 
 
-async def _day_has_data(hass: HomeAssistant, day: datetime.date) -> bool:
+async def _statistic_ids_with_data(
+    hass: HomeAssistant, statistic_ids: set[str], day: datetime.date
+) -> set[str]:
+    """Return the subset of statistic_ids that already have a statistics row on `day`.
+
+    Checked per statistic_id rather than via one representative sensor: the
+    integration's own sensors and the Energy dashboard's sensors are separate
+    entities (the latter from a different integration entirely) and can have
+    different gaps, so any one of them being present doesn't mean the others
+    are.
+    """
     start = _day_start_utc(day)
     end = start + datetime.timedelta(days=1)
 
-    def _query() -> bool:
-        result = statistics_during_period(
-            hass, start, end, {_REFERENCE_STATISTIC_ID}, "hour", None, {"mean"}
-        )
-        return bool(result.get(_REFERENCE_STATISTIC_ID))
+    def _query() -> set[str]:
+        result = statistics_during_period(hass, start, end, statistic_ids, "hour", None, {"mean", "sum"})
+        return {statistic_id for statistic_id, rows in result.items() if rows}
 
     return await get_instance(hass).async_add_executor_job(_query)
 
@@ -231,9 +243,12 @@ async def async_run_backfill(
         _LOGGER.debug("E3DC backfill: nothing to check, start date %s is after end date %s", start_date, end_date)
         return
 
+    all_statistic_ids = {statistic_id for _, statistic_id, _, _, _ in SENSOR_MAP} | set(energy_entity_ids.values())
+
     per_sensor_stats: dict[str, list[dict]] = {statistic_id: [] for _, statistic_id, _, _, _ in SENSOR_MAP}
     energy_stats: dict[str, list[dict]] = {entity_id: [] for entity_id in energy_entity_ids.values()}
     energy_running_sum: dict[str, float] = {}
+    energy_last_written_day: dict[str, datetime.date] = {}
     first_fetch = True
     days_backfilled = 0
 
@@ -241,11 +256,21 @@ async def async_run_backfill(
     while day <= end_date:
         _LOGGER.info("E3DC backfill: testing day %s", day)
 
-        if not forced_range and await _day_has_data(hass, day):
+        if forced_range:
+            missing_ids = set(all_statistic_ids)
+        else:
+            existing_ids = await _statistic_ids_with_data(hass, all_statistic_ids, day)
+            missing_ids = all_statistic_ids - existing_ids
+
+        if not missing_ids:
             day += datetime.timedelta(days=1)
             continue
 
-        _LOGGER.info("E3DC backfill: day %s has no data, backfilling from the E3DC archive", day)
+        _LOGGER.info(
+            "E3DC backfill: day %s is missing data for %s, backfilling from the E3DC archive",
+            day,
+            ", ".join(sorted(missing_ids)),
+        )
 
         data = await _fetch_day(hass, e3dc_api, day)
         if data is not None:
@@ -253,29 +278,46 @@ async def async_run_backfill(
                 _LOGGER.info("E3DC backfill: sample archive data for %s: %s", day, data)
                 first_fetch = False
             day_start = _day_start_utc(day)
+            # Home Assistant's recorder keeps compiling hourly `sum` stats even
+            # when a sensor stops updating (it carries the last known total
+            # forward), so an outage day can already have 24 stale-but-real
+            # hourly rows sitting at the pre-outage total. Writing only one row
+            # for the day would leave the other 23 in place and produce a
+            # spike-then-cancel sawtooth once the Energy dashboard diffs
+            # consecutive hours. Instead, write all 24 hours with the same
+            # value so the whole day is fully overwritten.
+            hour_starts = [day_start + datetime.timedelta(hours=h) for h in range(24)]
 
             for field, statistic_id, _, _, is_energy_wh in SENSOR_MAP:
+                if statistic_id not in missing_ids:
+                    continue
                 value = data.get(field)
                 if value is None:
                     continue
                 value = float(value)
                 if is_energy_wh:
                     value = value / 24.0  # Wh for the day -> average W
-                per_sensor_stats[statistic_id].append(
-                    {"start": day_start, "mean": value, "min": value, "max": value}
+                per_sensor_stats[statistic_id].extend(
+                    {"start": hour_start, "mean": value, "min": value, "max": value} for hour_start in hour_starts
                 )
 
             for field, energy_key in ENERGY_FIELD_MAP.items():
                 statistic_id = energy_entity_ids.get(energy_key)
-                if statistic_id is None:
+                if statistic_id is None or statistic_id not in missing_ids:
                     continue
                 value = data.get(field)
                 if value is None:
                     continue
-                if statistic_id not in energy_running_sum:
+                # Reseed from the real cumulative total whenever this isn't a
+                # continuation of a run of days we just wrote ourselves - handles
+                # a sensor having several separate gaps, not just one.
+                if energy_last_written_day.get(statistic_id) != day - datetime.timedelta(days=1):
                     energy_running_sum[statistic_id] = await _sum_before(hass, statistic_id, day_start)
                 energy_running_sum[statistic_id] += float(value) / 1000.0  # Wh -> kWh
-                energy_stats[statistic_id].append({"start": day_start, "sum": energy_running_sum[statistic_id]})
+                energy_stats[statistic_id].extend(
+                    {"start": hour_start, "sum": energy_running_sum[statistic_id]} for hour_start in hour_starts
+                )
+                energy_last_written_day[statistic_id] = day
 
             days_backfilled += 1
         day += datetime.timedelta(days=1)

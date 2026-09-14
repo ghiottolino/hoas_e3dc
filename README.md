@@ -41,10 +41,15 @@ The E3DC system keeps its own daily archive independently of whether Home
 Assistant was actually polling it. On every HA startup (unless `backfill:
 false` is set), the integration checks every day up to `backfill_max_days`
 (default 31) days back and backfills whichever ones have no statistics yet
-from that archive. Only day-level resolution is reconstructed (one value per
-missing day) - enough to keep daily/weekly/monthly history and the Energy
-dashboard gap-free, but an hour-zoomed history graph will show a single
-populated hour per backfilled day rather than a smooth curve.
+from that archive. Only day-level resolution is reconstructed - every hour of
+a missing day gets the same value - which keeps daily/weekly/monthly history
+and the Energy dashboard gap-free, but an hour-zoomed history graph will show
+a flat line for a backfilled day rather than its true intra-day shape. All 24
+hours are written deliberately, not just one: Home Assistant's recorder keeps
+compiling hourly statistics for a sensor even while it's frozen/unavailable,
+so an outage day can already have stale rows sitting at the pre-outage
+total - leaving those in place next to a single new row would show up as a
+spike-then-cancel glitch on the Energy dashboard.
 
 Two things get backfilled for each missing day:
 
