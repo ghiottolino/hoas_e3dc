@@ -24,6 +24,13 @@ sensor:
     power_meters_index: 6
     backfill: true
     backfill_max_days: 31
+    # Only needed if you named the `integration:` sensors below differently
+    # from the example - see "Usage with Home Assistant Energy".
+    energy_solar_production_entity_id: sensor.solar_production
+    energy_grid_return_entity_id: sensor.grid_return
+    energy_grid_consumption_entity_id: sensor.grid_consumption
+    energy_battery_incoming_entity_id: sensor.battery_incoming
+    energy_battery_outgoing_entity_id: sensor.battery_outgoing
 ```
 
 see [python-e3dc web connection configuration](https://github.com/fsantini/python-e3dc/blob/master/README.md#web-connection).
@@ -34,21 +41,29 @@ The E3DC system keeps its own daily archive independently of whether Home
 Assistant was actually polling it. On every HA startup (unless `backfill:
 false` is set), the integration checks every day up to `backfill_max_days`
 (default 31) days back and backfills whichever ones have no statistics yet
-from that archive. Only day-level resolution is
-reconstructed (one value per missing day), which is enough to keep
-daily/weekly/monthly history and the Energy dashboard's power graphs
-gap-free, but an hour-zoomed history graph will show a single populated hour
-per backfilled day rather than a smooth curve.
+from that archive. Only day-level resolution is reconstructed (one value per
+missing day) - enough to keep daily/weekly/monthly history and the Energy
+dashboard gap-free, but an hour-zoomed history graph will show a single
+populated hour per backfilled day rather than a smooth curve.
+
+Two things get backfilled for each missing day:
+
+- This integration's own power sensors (solar/grid/house/battery power,
+  battery charge, autarky, domestic consumption), as `mean` statistics.
+- The Energy dashboard's cumulative kWh sensors - i.e. the `integration:`
+  sensors from the section below (`sensor.solar_production`,
+  `sensor.grid_return`, `sensor.grid_consumption`, `sensor.battery_incoming`,
+  `sensor.battery_outgoing` by default) - as `sum` statistics, seeded from
+  whatever cumulative total already exists so backfilled days connect
+  cleanly with real data. If you named those sensors differently, set the
+  `energy_*_entity_id` options above; sensors that can't be found are skipped
+  with a warning in the log.
 
 To force a specific range (e.g. a known outage window older than
-`backfill_max_days`), call the `e3dc.backfill_days` service from Developer
-Tools > Actions with `start_date`/`end_date`, or leave them empty to re-run
-the automatic gap-fill on demand.
-
-Note this only backfills sensors created by this integration (solar/grid/house/battery
-power, battery charge, autarky, domestic consumption) - it does not
-reconstruct the cumulative kWh `integration:` sensors described below, since
-those belong to a separate integration.
+`backfill_max_days`, or to correct days backfilled by an older, buggy version
+of this feature), call the `e3dc.backfill_days` service from Developer Tools
+> Actions with `start_date`/`end_date`. Unlike the automatic run, a forced
+range always overwrites, regardless of whether those days already have data.
 
 # Usage with Home Assistant Energy 
 

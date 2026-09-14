@@ -2,10 +2,12 @@ backfill_days:
   name: Backfill days
   description: >-
     Fetch past days from the E3DC's own archive and import them as long-term
-    statistics for the E3DC sensors. With no fields set, fills the gap
-    between the last known statistic and yesterday (bounded by
-    backfill_max_days). Pass start_date/end_date to force a specific range,
-    overwriting any existing statistics in it.
+    statistics, both for this integration's own power sensors and for the
+    Energy dashboard's cumulative kWh sensors. With no fields set, checks
+    every day up to backfill_max_days back and fills whichever have no data
+    yet. Pass start_date/end_date to force a specific range, overwriting any
+    existing statistics in it - use this to correct days backfilled by an
+    older, buggy version of this feature.
   fields:
     start_date:
       name: Start date

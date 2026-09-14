@@ -47,6 +47,14 @@ async def async_setup_platform(
     CONFIG = {"powermeters": [{"index": config['power_meters_index']}]}
     BACKFILL = config.get('backfill', True)
     BACKFILL_MAX_DAYS = config.get('backfill_max_days', 45)
+    ENERGY_ENTITY_IDS = {
+        "solar_production": config.get('energy_solar_production_entity_id'),
+        "grid_return": config.get('energy_grid_return_entity_id'),
+        "grid_consumption": config.get('energy_grid_consumption_entity_id'),
+        "battery_incoming": config.get('energy_battery_incoming_entity_id'),
+        "battery_outgoing": config.get('energy_battery_outgoing_entity_id'),
+    }
+    ENERGY_ENTITY_IDS = {k: v for k, v in ENERGY_ENTITY_IDS.items() if v is not None}
 
     e3dc_api = await hass.async_add_executor_job(
         lambda: E3DC(
@@ -65,10 +73,12 @@ async def async_setup_platform(
         [E3DCSensor(e3dc_api, e3dc_data), GridProduction(e3dc_data), SolarProduction(e3dc_data),GridConsumption(e3dc_data),HouseConsumption(e3dc_data), WallboxConsumption(e3dc_data), BatteryIncoming(e3dc_data),BatteryOutgoing(e3dc_data),BatteryCharge(e3dc_data),GridConsumptionProduction(e3dc_data),BatteryIncomingOutgoing(e3dc_data),HouseConsumptionNegative(e3dc_data),Autarky(e3dc_data),DomesticConsumption(e3dc_data)]
     )
 
-    async_register_backfill_service(hass, DOMAIN, e3dc_api, BACKFILL_MAX_DAYS)
+    async_register_backfill_service(hass, DOMAIN, e3dc_api, BACKFILL_MAX_DAYS, ENERGY_ENTITY_IDS)
     if BACKFILL:
         hass.async_create_task(
-            async_run_backfill(hass, e3dc_api, max_days_back=BACKFILL_MAX_DAYS)
+            async_run_backfill(
+                hass, e3dc_api, max_days_back=BACKFILL_MAX_DAYS, energy_entity_ids=ENERGY_ENTITY_IDS
+            )
         )
 
 
