@@ -244,9 +244,8 @@ async def async_run_backfill(
         return
 
     all_statistic_ids = {statistic_id for _, statistic_id, _, _, _ in SENSOR_MAP} | set(energy_entity_ids.values())
+    sensor_meta = {statistic_id: (name, unit) for _, statistic_id, name, unit, _ in SENSOR_MAP}
 
-    per_sensor_stats: dict[str, list[dict]] = {statistic_id: [] for _, statistic_id, _, _, _ in SENSOR_MAP}
-    energy_stats: dict[str, list[dict]] = {entity_id: [] for entity_id in energy_entity_ids.values()}
     energy_running_sum: dict[str, float] = {}
     energy_last_written_day: dict[str, datetime.date] = {}
     first_fetch = True
@@ -288,6 +287,14 @@ async def async_run_backfill(
             # value so the whole day is fully overwritten.
             hour_starts = [day_start + datetime.timedelta(hours=h) for h in range(24)]
 
+            # Each day is flushed to the database immediately (rather than
+            # accumulated and imported once at the end) so that if a later
+            # day's reseed below needs "the last known sum", it sees this
+            # run's own prior days too - not just what existed before this
+            # backfill started. Without this, a single failed archive fetch
+            # partway through a run made every later day reseed from the
+            # stale pre-backfill baseline, silently discarding everything
+            # already computed and making the rest of the range wildly wrong.
             for field, statistic_id, _, _, is_energy_wh in SENSOR_MAP:
                 if statistic_id not in missing_ids:
                     continue
@@ -297,9 +304,9 @@ async def async_run_backfill(
                 value = float(value)
                 if is_energy_wh:
                     value = value / 24.0  # Wh for the day -> average W
-                per_sensor_stats[statistic_id].extend(
-                    {"start": hour_start, "mean": value, "min": value, "max": value} for hour_start in hour_starts
-                )
+                name, unit = sensor_meta[statistic_id]
+                stats = [{"start": hour_start, "mean": value, "min": value, "max": value} for hour_start in hour_starts]
+                async_import_statistics(hass, _build_metadata(statistic_id, name, unit, True, False), stats)
 
             for field, energy_key in ENERGY_FIELD_MAP.items():
                 statistic_id = energy_entity_ids.get(energy_key)
@@ -314,28 +321,19 @@ async def async_run_backfill(
                 if energy_last_written_day.get(statistic_id) != day - datetime.timedelta(days=1):
                     energy_running_sum[statistic_id] = await _sum_before(hass, statistic_id, day_start)
                 energy_running_sum[statistic_id] += float(value) / 1000.0  # Wh -> kWh
-                energy_stats[statistic_id].extend(
+                stats = [
                     {"start": hour_start, "sum": energy_running_sum[statistic_id]} for hour_start in hour_starts
+                ]
+                name = energy_key.replace("_", " ").title()
+                async_import_statistics(
+                    hass,
+                    _build_metadata(statistic_id, name, UnitOfEnergy.KILO_WATT_HOUR, False, True),
+                    stats,
                 )
                 energy_last_written_day[statistic_id] = day
 
             days_backfilled += 1
         day += datetime.timedelta(days=1)
-
-    for field, statistic_id, name, unit, _ in SENSOR_MAP:
-        stats = per_sensor_stats[statistic_id]
-        if stats:
-            async_import_statistics(hass, _build_metadata(statistic_id, name, unit, True, False), stats)
-
-    for energy_key, statistic_id in energy_entity_ids.items():
-        stats = energy_stats.get(statistic_id)
-        if stats:
-            name = energy_key.replace("_", " ").title()
-            async_import_statistics(
-                hass,
-                _build_metadata(statistic_id, name, UnitOfEnergy.KILO_WATT_HOUR, False, True),
-                stats,
-            )
 
     _LOGGER.info("E3DC backfill: done, backfilled %s day(s)", days_backfilled)
 
