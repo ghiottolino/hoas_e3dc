@@ -332,6 +332,19 @@ async def async_run_backfill(
                 )
                 energy_last_written_day[statistic_id] = day
 
+            # Wait for the recorder to actually process everything queued
+            # above before moving on. async_import_statistics only queues an
+            # ImportStatisticsTask on the recorder's internal task queue;
+            # get_instance(hass).async_add_executor_job (used by the reseed
+            # and gap-check reads) runs on a SEPARATE db-executor thread pool
+            # with no ordering guarantee relative to that queue. Without this
+            # wait, a later day's reseed can read the database before an
+            # earlier day's write in this same run has actually landed,
+            # silently discarding that day's contribution and corrupting
+            # everything from that point on - this was the actual cause of
+            # entire backfilled months coming out wildly wrong/negative.
+            await get_instance(hass).async_block_till_done()
+
             days_backfilled += 1
         day += datetime.timedelta(days=1)
 
